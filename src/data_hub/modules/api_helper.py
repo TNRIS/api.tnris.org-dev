@@ -139,7 +139,7 @@ def send_raw_email(
     email.send(fail_silently=False)
     return
 
-def auth_order(auth_details, order): # TODO: Stopping point
+def auth_order(auth_details, order):
     """Compare hashes of access code and one time passcode
 
     Args:
@@ -158,7 +158,7 @@ def auth_order(auth_details, order): # TODO: Stopping point
         # Secret salt to stop rainbow tables
         salt = order_details.access_salt
 
-        # Secret pepper to stop rainbow tables even if salt is known.
+        # Secret pepper. 
         pepper = os.environ.get("ACCESS_PEPPER")
 
         # Hash auth_details
