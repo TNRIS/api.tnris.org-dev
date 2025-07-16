@@ -9,9 +9,10 @@ import secrets
 import time
 from datetime import datetime, timezone
 import requests
+import traceback
+
 from rest_framework import status, viewsets
 from rest_framework.response import Response
-from django.conf import settings
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from modules.api_helper import logger
@@ -95,7 +96,7 @@ class FiservViewset(viewsets.ViewSet):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    def send_template_email(self, email_template, formatted, sender, replyer, html=False, CC_STRATMAP=False):
+    def send_template_email(self, email_template, formatted, sender, replyer, html=False, CC_EMAIL=""):
         """Send an email to the template email (Configured through API)
         sender and replyer default to mail_default to unless sendpoint
         """
@@ -126,7 +127,7 @@ class FiservViewset(viewsets.ViewSet):
                 body,
                 send_to=sender,
                 reply_to=replyer,
-                cc_email=os.environ.get("MAIL_DEFAULT_TO")
+                cc_email=CC_EMAIL
             )
         else:
             # send to ticketing system unless sendpoint has alternative key value
@@ -136,7 +137,7 @@ class FiservViewset(viewsets.ViewSet):
                 body,
                 send_to=sender,
                 reply_to=replyer,
-                cc_email=os.environ.get("MAIL_DEFAULT_TO")
+                cc_email=CC_EMAIL
             )
     
     def format_req(self, items):
@@ -181,7 +182,7 @@ class OrderFormViewSetSuper(
         email_template = EmailTemplate.objects.get(form_id="notify-user")
         self.send_template_email(
             email_template,
-            {"uuid": str(order_object.id)},
+            {"uuid": str(order_object.id), "email": email},
             email,
             os.environ.get("STRATMAP_EMAIL"),
             SEND_HTML_FLAG
@@ -219,10 +220,10 @@ class OrderFormViewSetSuper(
         """Create a order object and notify"""
         try:
             # Generate Access Code and one way encrypt it.
-            formatted_items = self.format_req(request.data.items())
-            order_details = self.format_req(request.data.get("order_details").items())
+            order_details = request.data.get("order_details")
+
             order_object = self.create_order_object(
-                email=order_details["email"],
+                email=order_details["Email"],
                 order_details=order_details
             )
 
@@ -232,6 +233,7 @@ class OrderFormViewSetSuper(
                 else request.META["HTTP_HOST"]
             )
             order_details["order_uuid"] = str(order_object.id)
+            formatted_details = self.format_req(order_details.items())
             order_object.order_details.details = json.dumps(order_details)
             order_object.order_details.save()
             order_object.save()
@@ -241,22 +243,18 @@ class OrderFormViewSetSuper(
             ################################################
             email_template = EmailTemplate.objects.get(form_id=order_details["form_id"])
             body = self.compile_email_body(
-                email_template.email_template_body, order_details
+                email_template.email_template_body, formatted_details
             )
-            sender = (
-                os.environ.get("MAIL_DEFAULT_TO")
-                if email_template.sendpoint == "default"
-                else order_details[email_template.sendpoint]
-            )
+            sender = os.environ.get("MAIL_DEFAULT_TO")
             replyer = (
-                order_details["email"]
-                if "email" in order_details.keys()
+                formatted_details["email"]
+                if "email" in formatted_details.keys()
                 else "unknown@tnris.org"
             )
 
             # If name was sent in request add it to the address information.
-            if "name" in order_details.keys():
-                replyer = "%s <%s>" % (order_details["name"], order_details["email"])
+            if "name" in formatted_details.keys():
+                replyer = "%s <%s>" % (formatted_details["name"], formatted_details["email"])
             # Send to ticketing system unless sendpoint has alternative key value in email template record.
             api_helper.send_raw_email(
                 subject=email_template.email_template_subject,
@@ -266,7 +264,7 @@ class OrderFormViewSetSuper(
             )
 
             # If we get this far then send a notification to the requester via email, and a 201 created response.
-            self.notify_user(order_object, order_details["email"])
+            self.notify_user(order_object, formatted_details["email"])
             return Response(
                 {"status": "success", "message": "Success"},
                 status=status.HTTP_201_CREATED,
@@ -274,6 +272,7 @@ class OrderFormViewSetSuper(
         except Exception as e:
             if api_helper.checkLogger():
                 logger.error("Error creating order")
+            print(e)
             return Response(
                 {"status": "failure", "message": "internal error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -288,7 +287,6 @@ class GenOtpViewSetSuper(
     def create_super(self, request, format=None):
         try:
             order = OrderType.objects.get(id=request.query_params["uuid"])
-            details = json.loads(order.order_details.details)
 
             # Regenerate OTP
             otp = secrets.token_urlsafe(12)
@@ -301,17 +299,17 @@ class GenOtpViewSetSuper(
             order.order_details.otp_age = time.time()
 
             order.order_details.save()
+            formatted_details = self.format_req(json.loads(order.order_details.details).items())
 
             # Send One time passcode to users email.
             # get email template for generating otp
             email_template = EmailTemplate.objects.get(form_id="gen-otp")
-            # FiservViewset.format_req(request.data.items())
             formatted = self.format_req(request.data.items())
             formatted["otp"] = otp
             self.send_template_email(
                 email_template,
                 formatted,
-                details["email"],
+                formatted_details["email"],
                 os.environ.get("STRATMAP_EMAIL"),
                 SEND_HTML_FLAG
             )
@@ -491,7 +489,7 @@ class OrderCleanupViewSetSuper(FiservViewset):
                     request.query_params._mutable = True
                     request.query_params["uuid"] = str(order["id"])
                     request.query_params._mutable = False
-                    receipt = self.get_receipt(request, format) #TODO: Get receipt then continue.
+                    receipt = self.get_receipt(request, format)
                     if receipt.status_code == 200: 
                         if not order["tnris_notified"]:
                             if api_helper.checkLogger():
@@ -555,11 +553,9 @@ class OrderCleanupViewSetSuper(FiservViewset):
             )
             # return response
         except Exception as e:
-            message = "Error cleaning up orders. Exception: "
-            if settings.DEBUG:
-                message = message + str(e)
+            message = "Error cleaning up orders. Exception: "  + str(e)
             if api_helper.checkLogger():
-                logger.error(message=message + str(e))
+                logger.error(message)
             response = Response(
                 {"status": "failure", "message": "failure"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -606,7 +602,7 @@ class OrderCleanupViewSetSuper(FiservViewset):
 
                 orderContent = json.loads(orderinfo.content)
                 if orderContent['status'] == "Y":
-                    orders = orderContent["transaction"] # TODO: Check 
+                    orders = orderContent["transaction"]
                     response = Response(
                         {
                             "status_code": orderinfo.status_code,
@@ -626,11 +622,9 @@ class OrderCleanupViewSetSuper(FiservViewset):
                 {"status_code": 500}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-            message = "Error getting receipt: "
-            if settings.DEBUG:
-                message = message + str(e)
-                if api_helper.checkLogger():
-                    logger.error(message)
+            message = "Error getting receipt: "  + str(e)
+            if api_helper.checkLogger():
+                logger.error(message)
         finally:
             return response
 
@@ -664,9 +658,7 @@ class OrderSubmitViewSetSuper(
             # Round to second digit because of binary Float
             transactionfee = round(transactionfee + 0.25, 2)
             template_id = 1092 #Configure the default
-            payment_method = (
-                "CC"
-            )
+            payment_method = "CC"
             if "payment" in order_details:
                 # In this case read in the payment method from the body.
                 payment_method = order_details["payment"]
@@ -683,13 +675,17 @@ class OrderSubmitViewSetSuper(
                     template_id = 1093
 
             body = fiserv_helper.generate_fiserv_post_body(payment_method, str(order.order_details_id), template_id, total, transactionfee, order_details)
+            logger.info(body)
+            logger.info(os.environ.get("FISERV_DEV_ACCOUNT_ID"))
             requestUri = f"{FISERV_URL_V3}GetRequestID"
+            logger.info(requestUri)
+
             hmac = fiserv_helper.generate_fiserv_hmac(
                 requestUri,
                 "POST",
                 json.dumps(body),
-                os.environ.get("FISERV_DEV_ACCOUNT_ID"),
-                os.environ.get("FISERV_DEV_AUTH_CODE"),
+                str(os.environ.get("FISERV_DEV_ACCOUNT_ID")),
+                str(os.environ.get("FISERV_DEV_AUTH_CODE")),
             )
             basic = fiserv_helper.generate_basic_auth()
             response = requests.post(
@@ -704,11 +700,11 @@ class OrderSubmitViewSetSuper(
             )
 
             rbody = json.loads(response.text)
-
+            hpp_page = str(os.environ.get("FISERV_HPP_PAGE"))
             if "requestid" in rbody and len(rbody['requestid']) > 0:
                 orderObj.filter(id=request.query_params["uuid"]).update(
                     order_token=rbody["requestid"],
-                    order_url=f"{os.environ.get("FISERV_HPP_PAGE")}ProcessRequest?reqNo={rbody['requestid']}",
+                    order_url=f"{hpp_page}ProcessRequest?reqNo={rbody['requestid']}",
                 )
                 order = orderObj.get(id=request.query_params["uuid"])
 
@@ -734,11 +730,9 @@ class OrderSubmitViewSetSuper(
                     status=status.HTTP_409_CONFLICT,
                 )
         except Exception as e:
-            message = "Error creating order. Exception: "
-            if settings.DEBUG:
-                message = message + str(e)
-                if api_helper.checkLogger():
-                    logger.error(message)
+            if api_helper.checkLogger():
+                logger.error(traceback.format_exc()) 
+                logger.error(f"Error creating order. Exception: {str(e)}")
             response = Response(
                 {
                     "status": "failure",

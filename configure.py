@@ -63,6 +63,7 @@ export_command = ("export DB_PASSWORD=" + secrets["DB_PASSWORD"] +
 " FISERV_COMPANY_CODE=" + secrets["FISERV_COMPANY_CODE"] +
 " FISERV_CUSTOMER_ID=" + secrets["FISERV_CUSTOMER_ID"] +
 " FISERV_USER_ID=" + secrets["FISERV_USER_ID"] +
+" FISERV_SERVICE_CODE=" + secrets["FISERV_SERVICE_CODE"] +
 
 # Encryption Environmental Variables
 " FKEY1=" + secrets["FKEY1"] +
@@ -75,13 +76,13 @@ export_command = ("export DB_PASSWORD=" + secrets["DB_PASSWORD"] +
 " ARCGIS_USERNAME=" + secrets["ARCGIS_USERNAME"] +
 " ARCGIS_PASSWORD=" + secrets["ARCGIS_PASSWORD"] +
 
-# FDMS Constants.
-" API_URL=stagingapi.tnris.org",
-" FDMS_URL=https://securecheckout-uat.cdc.nicusa.com/ccprest/api/v1/TX/",
-" FISERV_URL=https://snappaydirectapi-cert.fiserv.com/api/interop/",
-" FISERV_URL_V2=https://snappaydirectapi-cert.fiserv.com/api/interop/v2/",
-" FISERV_URL_V3=https://snappaydirectapi-cert.fiserv.com/api/interop/v3/",
-" FISERV_HPP_PAGE=https://snappaydirect-cert.fiserv.com/interop/HostedPaymentPage/",
+# FDMS Constants
+" API_URL=stagingapi.tnris.org" +
+" FDMS_URL=https://securecheckout-uat.cdc.nicusa.com/ccprest/api/v1/TX/" +
+" FISERV_URL=https://snappaydirectapi-cert.fiserv.com/api/interop/" +
+" FISERV_URL_V2=https://snappaydirectapi-cert.fiserv.com/api/interop/v2/" +
+" FISERV_URL_V3=https://snappaydirectapi-cert.fiserv.com/api/interop/v3/" +
+" FISERV_HPP_PAGE=https://snappaydirect-cert.fiserv.com/interop/HostedPaymentPage/" +
 
 # the following is only used within ETL scripts (specifically, migrate.py)
 " TNRIS_REPO='local_path_to_cloned_tnris_website_repo'")
